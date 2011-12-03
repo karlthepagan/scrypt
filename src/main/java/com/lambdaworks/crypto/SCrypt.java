@@ -8,7 +8,6 @@ import com.lambdaworks.jni.UnsupportedPlatformException;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.GeneralSecurityException;
-import java.security.NoSuchAlgorithmException;
 
 import static java.lang.Integer.MAX_VALUE;
 import static java.lang.System.arraycopy;
@@ -26,51 +25,11 @@ public class SCrypt {
     private static boolean native_library_loaded = false;
 
     static {
-        try {
-            JarLibraryLoader loader = new JarLibraryLoader();
-            native_library_loaded = loader.load("libscrypt", true);
-        } catch (UnsupportedPlatformException e) {
-            // windows, etc
-        }
+        JarLibraryLoader loader = new JarLibraryLoader();
+        native_library_loaded = loader.load("libscrypt", true);
     }
 
-    private final int N;
-    private final int r;
-    private final int p;
-    private final Mac mac;
-    
-    private final byte[] B;
-    private final byte[] XY;
-    private final byte[] V;
-    
     /**
-     * Allocates working memory for computing hash. Operating in a nearly constant memory profile can significantly
-     * improve performance in a JVM.
-     *
-     * @param N         CPU cost parameter.
-     * @param r         Memory cost parameter.
-     * @param p         Parallelization parameter.
-     *
-     * @throws GeneralSecurityException when HMAC_SHA256 is not available.
-     */
-    public SCrypt(int N, int r, int p) throws NoSuchAlgorithmException {
-        if (N == 0 || (N & (N - 1)) != 0) throw new IllegalArgumentException("N must be > 0 and a power of 2");
-
-        if (N > MAX_VALUE / 128 / r) throw new IllegalArgumentException("Parameter N is too large");
-        if (r > MAX_VALUE / 128 / p) throw new IllegalArgumentException("Parameter r is too large");
-        
-        mac = Mac.getInstance("HmacSHA256");
-        
-        this.N = N;
-        this.r = r;
-        this.p = p;
-
-        B = new byte[128 * r * p];
-        XY = new byte[256 * r];
-        V  = new byte[128 * r * N];
-    }
-
-	/**
      * Implementation of the <a href="http://www.tarsnap.com/scrypt/scrypt.pdf"/>scrypt KDF</a>.
      * Calls the native implementation {@link #scryptN} when the native library was successfully
      * loaded, otherwise calls {@link #scryptJ}.
@@ -120,23 +79,25 @@ public class SCrypt {
      * @throws GeneralSecurityException when HMAC_SHA256 is not available.
      */
     public static byte[] scryptJ(byte[] passwd, byte[] salt, int N, int r, int p, int dkLen) throws GeneralSecurityException {
-        SCrypt sc = new SCrypt(N,r,p);
-        return sc.scrypt(passwd, salt, dkLen);
-    }
-    
-    public byte[] scrypt(byte[] passwd, byte[] salt, int dkLen) throws GeneralSecurityException {
-    
+
+        if (N == 0 || (N & (N - 1)) != 0) throw new IllegalArgumentException("N must be > 0 and a power of 2");
+
+        if (N > MAX_VALUE / 128 / r) throw new IllegalArgumentException("Parameter N is too large");
+        if (r > MAX_VALUE / 128 / p) throw new IllegalArgumentException("Parameter r is too large");
+
+        Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(new SecretKeySpec(passwd, "HmacSHA256"));
 
         byte[] DK = new byte[dkLen];
+        byte[] B  = new byte[128 * r * p];
+        byte[] XY = new byte[256 * r];
+        byte[] V  = new byte[128 * r * N];
 
         int i;
 
-        // B overwritten here
         PBKDF.pbkdf2(mac, salt, 1, B, p * 128 * r);
 
         for (i = 0; i < p; i++) {
-            // XY, V overwritten in parts
             smix(B, i * 128 * r, r, N, V, XY);
         }
 
@@ -149,7 +110,7 @@ public class SCrypt {
         byte[] X = new byte[64];
         int[] B32 = new int[16];
         int[] x   = new int[16];
-        
+
         int Xi = 0;
         int Yi = 128 * r;
         int i;
